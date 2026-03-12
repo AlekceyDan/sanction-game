@@ -20,6 +20,7 @@
   messagingSenderId: "528335066731",
   appId: "1:528335066731:web:189991c63232f40d83432e"
   };
+  // ════════════════════════════════════════════
 
   try {
     firebase.initializeApp(firebaseConfig);
@@ -663,11 +664,19 @@ function generateLevel(lvNum, seed) {
         if(safePut(dri,dci,T.DATA)) dataPlaced++;
   }
 
-  // VPN — middle room
+  // VPN — middle room, with fallback to any room
+  var vpnPlaced = false;
   var vpnLeaf = leaves[Math.floor(leaves.length/2)];
   if(vpnLeaf&&vpnLeaf.room){
     var vp=bestCell(vpnLeaf.room,sx,sy);
-    if(vp) safePut(vp.y,vp.x,T.VPN);
+    if(vp && safePut(vp.y,vp.x,T.VPN)) vpnPlaced=true;
+  }
+  if(!vpnPlaced){
+    for(var vi=0;vi<leaves.length&&!vpnPlaced;vi++){
+      var vl=leaves[vi];if(!vl||!vl.room) continue;
+      var vp2=bestCell(vl.room,sx,sy);
+      if(vp2 && safePut(vp2.y,vp2.x,T.VPN)) vpnPlaced=true;
+    }
   }
 
   // Ability pickup
@@ -680,13 +689,18 @@ function generateLevel(lvNum, seed) {
     }
   }
 
-  // Firewalls
+  // Firewalls — only in rooms, far from start
   var fwCount=Math.floor(diff/3);
-  for(var f=0;f<fwCount;f++){
-    var fr=1+Math.floor(rng()*(ROWS-3));
-    var fc=1+Math.floor(rng()*(COLS-2));
-    if(grid[fr][fc]===T.EMPTY && Math.abs(fc-sx)+Math.abs(fr-sy)>5)
-      safePut(fr,fc,T.FIRE);
+  var fwPlaced=0;
+  var fwRooms=leaves.slice();fwRooms.sort(function(){return rng()-0.5;});
+  for(var f=0;f<fwRooms.length&&fwPlaced<fwCount;f++){
+    var fl=fwRooms[f];if(!fl||!fl.room) continue;
+    // Skip start room
+    if(fl.room.x===startRoom.x&&fl.room.y===startRoom.y) continue;
+    for(var fri=fl.room.y;fri<fl.room.y+fl.room.h&&fwPlaced<fwCount;fri++)
+      for(var fci=fl.room.x;fci<fl.room.x+fl.room.w&&fwPlaced<fwCount;fci++)
+        if(grid[fri][fci]===T.EMPTY && Math.abs(fci-sx)+Math.abs(fri-sy)>6)
+          if(safePut(fri,fci,T.FIRE)) fwPlaced++;
   }
 
   // Mines
@@ -1146,11 +1160,17 @@ function draw(){
       } else {
         ctx.fillStyle='#02020e';ctx.fillRect(px,py,TILE,TILE);
         var colors={2:'#00ff44',3:'#00aaff',5:'#ffdd00',8:'#88aaff',9:'#ffaa00',10:'#ffff00',11:'#ffdd00'};
+        var emojis={2:'🔒',3:'📦',5:'🚪',7:'💣',8:'❄️',9:'🎯',10:'⚡',11:'🗝️'};
         var labels={2:'VPN',3:'DATA',5:'EXIT',7:'MINE',8:'ICE',9:'DCY',10:'SPD',11:'KEY'};
         var glow=colors[t];
         if(glow){ctx.shadowColor=glow;ctx.shadowBlur=6+Math.sin(now/350)*3;}
-        ctx.fillStyle=glow||'#888';ctx.font='bold 9px monospace';ctx.textAlign='center';
-        if(labels[t])ctx.fillText(labels[t],px+TILE/2,py+TILE/2+4);
+        if(emojis[t]){
+          ctx.font=(TILE-8)+'px monospace';ctx.textAlign='center';
+          ctx.fillText(emojis[t],px+TILE/2,py+TILE/2+6);
+        } else {
+          ctx.fillStyle=glow||'#888';ctx.font='bold 9px monospace';ctx.textAlign='center';
+          if(labels[t])ctx.fillText(labels[t],px+TILE/2,py+TILE/2+4);
+        }
         ctx.shadowBlur=0;
         if(t===T.MINE){
           var mk2=col+','+row;
