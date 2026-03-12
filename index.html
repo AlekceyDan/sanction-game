@@ -6,12 +6,10 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Обход Санкций</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<!-- Firebase SDK -->
-<script type="module">
-  import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-  import { getDatabase, ref, set, get, query, orderByChild, limitToLast }
-    from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
-
+<!-- Firebase Compat SDK (works without ES modules, no CORS issues) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+<script>
   // ════════════════════════════════════════════
   //  🔥 ВСТАВЬ СЮДА СВОЙ FIREBASE CONFIG
   // ════════════════════════════════════════════
@@ -26,42 +24,50 @@ const firebaseConfig = {
 };
   // ════════════════════════════════════════════
 
-  const app = initializeApp(firebaseConfig);
-  const db  = getDatabase(app);
+  try {
+    firebase.initializeApp(firebaseConfig);
+    var _db = firebase.database();
 
-  // Expose to global scope for game code
-  window._fb = {
-    saveScore: function(userId, name, score) {
-      var userRef = ref(db, 'leaderboard/' + userId);
-      // Only update if new score is higher
-      get(userRef).then(function(snap) {
-        var prev = snap.exists() ? (snap.val().score || 0) : 0;
-        if (score > prev) {
-          set(userRef, { name: name, score: score, ts: Date.now() });
-        }
-      }).catch(function(){
-        // Write anyway if read failed
-        set(userRef, { name: name, score: score, ts: Date.now() });
-      });
-    },
-    getTop20: function(cb) {
-      var lbRef = query(
-        ref(db, 'leaderboard'),
-        orderByChild('score'),
-        limitToLast(20)
-      );
-      get(lbRef).then(function(snap) {
-        var entries = [];
-        snap.forEach(function(child) {
-          entries.push({ id: child.key, ...child.val() });
+    window._fb = {
+      saveScore: function(userId, name, score) {
+        var userRef = _db.ref('leaderboard/' + userId);
+        userRef.once('value').then(function(snap) {
+          var prev = snap.exists() ? (snap.val().score || 0) : 0;
+          if (score > prev) {
+            userRef.set({ name: name, score: score, ts: Date.now() });
+          }
+        }).catch(function() {
+          userRef.set({ name: name, score: score, ts: Date.now() });
         });
-        entries.sort(function(a, b){ return b.score - a.score; });
-        cb(null, entries);
-      }).catch(function(err){ cb(err, []); });
-    }
-  };
-  window._fbReady = true;
-  document.dispatchEvent(new Event('fbReady'));
+      },
+      getTop20: function(cb) {
+        _db.ref('leaderboard')
+          .orderByChild('score')
+          .limitToLast(20)
+          .once('value')
+          .then(function(snap) {
+            var entries = [];
+            snap.forEach(function(child) {
+              var v = child.val();
+              entries.push({
+                id:    child.key,
+                name:  v.name  || 'Агент',
+                score: v.score || 0,
+                ts:    v.ts    || 0
+              });
+            });
+            entries.sort(function(a, b){ return b.score - a.score; });
+            cb(null, entries);
+          })
+          .catch(function(err){ cb(err, []); });
+      }
+    };
+    window._fbReady = true;
+    console.log('Firebase ready ✅');
+  } catch(e) {
+    console.error('Firebase init error:', e);
+    window._fbReady = false;
+  }
 </script>
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
 <style>
@@ -330,33 +336,20 @@ function showLeaderboard() {
 
   var myId = tgUser ? String(tgUser.id) : null;
 
-  function doLoad() {
-    if (!window._fb) {
-      document.getElementById('lbContent').innerHTML =
-        '<div style="font-size:7px;color:#ff4400;margin:20px 0">Firebase не настроен.<br>Вставь конфиг в HTML.</div>';
-      return;
-    }
-    window._fb.getTop20(function(err, entries) {
-      if (err || !entries.length) {
-        renderLeaderboard([], myId);
-      } else {
-        renderLeaderboard(entries, myId);
-      }
-    });
+  if (!window._fb) {
+    document.getElementById('lbContent').innerHTML =
+      '<div style="font-size:7px;color:#ff4400;margin:20px 0;text-align:center">⚠️ Firebase не настроен.<br><br>Вставь firebaseConfig<br>в начало файла.</div>';
+    return;
   }
 
-  if (window._fbReady) {
-    doLoad();
-  } else {
-    document.addEventListener('fbReady', doLoad, { once: true });
-    // Timeout fallback
-    setTimeout(function() {
-      if (!window._fbReady) {
-        document.getElementById('lbContent').innerHTML =
-          '<div style="font-size:7px;color:#ff4400;margin:20px 0">Не удалось загрузить.<br>Проверь Firebase конфиг.</div>';
-      }
-    }, 6000);
-  }
+  window._fb.getTop20(function(err, entries) {
+    if (err) {
+      document.getElementById('lbContent').innerHTML =
+        '<div style="font-size:7px;color:#ff4400;margin:20px 0;text-align:center">Ошибка загрузки 😕<br><br>' + (err.message||'') + '</div>';
+      return;
+    }
+    renderLeaderboard(entries, myId);
+  });
 }
 
 function renderLeaderboard(entries, myId) {
