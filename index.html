@@ -10,9 +10,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
 <script>
-  // ════════════════════════════════════════════
-  //  🔥 ВСТАВЬ СЮДА СВОЙ FIREBASE CONFIG
-  // ════════════════════════════════════════════
+
   var firebaseConfig = {
   apiKey: "AIzaSyAT_JSJXQLJ87FAEPa0VE1knW17LrLnLfQ",
   authDomain: "sanction-game.firebaseapp.com",
@@ -22,7 +20,6 @@
   messagingSenderId: "528335066731",
   appId: "1:528335066731:web:189991c63232f40d83432e"
   };
-  // ════════════════════════════════════════════
 
   try {
     firebase.initializeApp(firebaseConfig);
@@ -1149,7 +1146,7 @@ function draw(){
       } else {
         ctx.fillStyle='#02020e';ctx.fillRect(px,py,TILE,TILE);
         var colors={2:'#00ff44',3:'#00aaff',5:'#ffdd00',8:'#88aaff',9:'#ffaa00',10:'#ffff00',11:'#ffdd00'};
-        var labels={2:'🔒',3:'📦',5:'EXIT',7:'💣',8:'ICE',9:'DCY',10:'SPD',11:'KEY'};
+        var labels={2:'🔒',3:'📦',5:'EXIT',7:'💣',8:'❄️',9:'🎯',10:'⚡',11:'KEY'};
         var glow=colors[t];
         if(glow){ctx.shadowColor=glow;ctx.shadowBlur=6+Math.sin(now/350)*3;}
         ctx.fillStyle=glow||'#888';ctx.font='bold 9px monospace';ctx.textAlign='center';
