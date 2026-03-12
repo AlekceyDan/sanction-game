@@ -13,7 +13,7 @@
   // ════════════════════════════════════════════
   //  🔥 ВСТАВЬ СЮДА СВОЙ FIREBASE CONFIG
   // ════════════════════════════════════════════
-const firebaseConfig = {
+  var firebaseConfig = {
   apiKey: "AIzaSyAT_JSJXQLJ87FAEPa0VE1knW17LrLnLfQ",
   authDomain: "sanction-game.firebaseapp.com",
   databaseURL: "https://sanction-game-default-rtdb.europe-west1.firebasedatabase.app",
@@ -21,7 +21,7 @@ const firebaseConfig = {
   storageBucket: "sanction-game.firebasestorage.app",
   messagingSenderId: "528335066731",
   appId: "1:528335066731:web:189991c63232f40d83432e"
-};
+  };
   // ════════════════════════════════════════════
 
   try {
@@ -701,8 +701,8 @@ function generateLevel(lvNum, seed) {
       safePut(mr,mc,T.MINE);
   }
 
-  // ── 9. Place EXIT last — guaranteed ──
-  grid[ey][ex] = T.EXIT;
+  // ── 9. EXIT spawns dynamically when all data collected ──
+  // Don't place on grid now — spawn later
 
   // ── 10. Guards ──
   var guardCount = 1 + Math.min(Math.floor(diff*0.6), 8);
@@ -736,6 +736,7 @@ function generateLevel(lvNum, seed) {
   var timer = Math.max(40, 100-diff*3);
   var nameIdx = (lvNum-1) % LVL_NAMES.length;
   return {
+    exitPos: {x:ex, y:ey},
     name: 'LVL '+lvNum+': '+LVL_NAMES[nameIdx],
     t: timer,
     data: Math.max(1, dataPlaced),
@@ -865,7 +866,8 @@ function initLv(i){
   var l = getLevelData(i);
   G={grid:l.grid,player:{x:l.start.x,y:l.start.y},guards:l.guards,hasVpn:false,
      data:0,dataTotal:Math.max(1,l.data),level:i,timerMs:l.t*1000,timerStart:Date.now(),
-     hasKey:false,msg:'',mc:'#00ff88',levelName:l.name,seed:l.seed||0};
+     hasKey:false,msg:'',mc:'#00ff88',levelName:l.name,seed:l.seed||0,
+     exitPos:l.exitPos||null,exitSpawned:false};
   vpnEnd=0;sprintEnd=0;decoyPos=null;decoyEnd=0;abCD=[0,0,0];mineTmr={};parts=[];
   updAbUI();
 }
@@ -1041,7 +1043,35 @@ function tick(){
           snd.step();G.player.x=nx;G.player.y=ny;setMsg('');
           var t=G.grid[ny][nx];
           if(t===T.VPN){G.hasVpn=true;vpnEnd=now+20000;G.grid[ny][nx]=T.EMPTY;snd.vpn();hap('success');setMsg('🔒 VPN: 20 сек','#00ff44');score+=50;}
-          else if(t===T.DATA){G.data++;G.grid[ny][nx]=T.EMPTY;snd.pickup();hap('medium');setMsg('+100 очков','#00aaff');score+=100;burst(G.player,'#00aaff',8);}
+          else if(t===T.DATA){
+            G.data++;G.grid[ny][nx]=T.EMPTY;snd.pickup();hap('medium');score+=100;burst(G.player,'#00aaff',8);
+            if(G.data>=G.dataTotal){
+              // Spawn exit now!
+              var ep=G.exitPos;
+              if(ep&&G.grid[ep.y]&&G.grid[ep.y][ep.x]!==T.WALL){
+                G.grid[ep.y][ep.x]=T.EXIT;
+              } else {
+                // Find nearest empty cell to exitPos as fallback
+                var placed=false;
+                for(var rad=0;rad<10&&!placed;rad++){
+                  for(var dr=-rad;dr<=rad&&!placed;dr++){
+                    for(var dc=-rad;dc<=rad&&!placed;dc++){
+                      var tr=(ep?ep.y:1)+dr, tc=(ep?ep.x:COLS-2)+dc;
+                      if(tr>0&&tr<ROWS-1&&tc>0&&tc<COLS-1&&G.grid[tr][tc]===T.EMPTY){
+                        G.grid[tr][tc]=T.EXIT;placed=true;
+                      }
+                    }
+                  }
+                }
+              }
+              G.exitSpawned=true;
+              hap('success');snd.vpn();
+              setMsg('🚪 ВЫХОД ОТКРЫТ! Найди его!','#ffdd00');
+              burst(G.player,'#ffdd00',20);
+            } else {
+              setMsg('+100 очков · Данных: '+G.data+'/'+G.dataTotal,'#00aaff');
+            }
+          }
           else if(t===T.IFREEZE){G.grid[ny][nx]=T.EMPTY;snd.pickup();hap('light');abCD[0]=0;setMsg('❄️ Фриз готов!','#88aaff');score+=25;}
           else if(t===T.IDECOY){G.grid[ny][nx]=T.EMPTY;snd.pickup();hap('light');abCD[1]=0;setMsg('🎯 Декой готов!','#ffaa00');score+=25;}
           else if(t===T.ISPRINT){G.grid[ny][nx]=T.EMPTY;snd.pickup();hap('light');abCD[2]=0;setMsg('⚡ Спринт готов!','#ffff00');score+=25;}
@@ -1050,8 +1080,7 @@ function tick(){
             setMsg('🗝️ Двери открыты!','#ffdd00');score+=75;burst(G.player,'#ffdd00',14);}
           else if(t===T.MINE){var mk=nx+','+ny;if(!mineTmr[mk]){mineTmr[mk]=now+2000;hap('warning');setMsg('💣 МИНА! БЕГИ!','#ff2200');}}
           else if(t===T.EXIT){
-            if(G.data>=G.dataTotal){winLv();return;}
-            else{setMsg('Данных: '+G.data+'/'+G.dataTotal,'#ffaa00');hap('warning');}
+            winLv();return;
           }
         }
       }
