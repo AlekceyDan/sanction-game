@@ -526,6 +526,10 @@ function isWalkable(tile) {
   return tile !== T.WALL && tile !== undefined;
 }
 
+function isWalkableNoFire(tile) {
+  return tile !== T.WALL && tile !== T.FIRE && tile !== undefined;
+}
+
 function isReachable(grid, sx, sy, tx, ty) {
   var visited = {};
   var queue = [{x:sx,y:sy}];
@@ -538,6 +542,25 @@ function isReachable(grid, sx, sy, tx, ty) {
       var nx=cur.x+dirs[d].dx, ny=cur.y+dirs[d].dy;
       var key=nx+','+ny;
       if (!visited[key] && grid[ny] && isWalkable(grid[ny][nx])) {
+        visited[key]=true; queue.push({x:nx,y:ny});
+      }
+    }
+  }
+  return false;
+}
+
+function isReachableNoFire(grid, sx, sy, tx, ty) {
+  var visited = {};
+  var queue = [{x:sx,y:sy}];
+  visited[sx+','+sy] = true;
+  var dirs = [{dx:1,dy:0},{dx:-1,dy:0},{dx:0,dy:1},{dx:0,dy:-1}];
+  while (queue.length) {
+    var cur = queue.shift();
+    if (cur.x===tx && cur.y===ty) return true;
+    for (var d=0; d<4; d++) {
+      var nx=cur.x+dirs[d].dx, ny=cur.y+dirs[d].dy;
+      var key=nx+','+ny;
+      if (!visited[key] && grid[ny] && isWalkableNoFire(grid[ny][nx])) {
         visited[key]=true; queue.push({x:nx,y:ny});
       }
     }
@@ -731,9 +754,9 @@ function generateLevel(lvNum, seed) {
     var fc2=corridorCells[f];
     // Tentatively place firewall
     grid[fc2.y][fc2.x]=T.FIRE;
-    // Check: player can still reach exit area AND vpn is still reachable (if it exists)
+    // Check: player can still reach exit AND vpn without crossing any firewall
     var ok=isReachable(grid,sx,sy,ex,ey);
-    if(ok && vpnPos) ok=isReachable(grid,sx,sy,vpnPos.x,vpnPos.y);
+    if(ok && vpnPos) ok=isReachableNoFire(grid,sx,sy,vpnPos.x,vpnPos.y);
     if(ok){
       fwPlaced++;
     } else {
@@ -975,7 +998,7 @@ function die(reason){
       tg.MainButton.onClick(function(){
         hap('light');
         var botLink = 'https://t.me/no_restriction_bot';
-        var text = '🕵️ Обход Санкций\n\nЯ набрал ' + score + ' очков!\nСмогёшь лучше? 👇\n @no_restriction_bot' + botLink;
+        var text = '🕵️ Обход Санкций\n\nЯ набрал ' + score + ' очков!\nСмогёшь лучше? 👇\n' + botLink;
         // Try native Telegram share
         if(tg.openTelegramLink) {
           tg.openTelegramLink('https://t.me/share/url?url=' + encodeURIComponent(botLink) + '&text=' + encodeURIComponent('🕵️ Обход Санкций — я набрал ' + score + ' очков! Смогёшь лучше?'));
