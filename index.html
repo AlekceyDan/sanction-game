@@ -511,6 +511,10 @@ function bspGetLeaves(node, leaves) {
 }
 
 // BFS reachability check
+function isWalkable(tile) {
+  return tile !== T.WALL && tile !== undefined;
+}
+
 function isReachable(grid, sx, sy, tx, ty) {
   var visited = {};
   var queue = [{x:sx,y:sy}];
@@ -522,7 +526,7 @@ function isReachable(grid, sx, sy, tx, ty) {
     for (var d=0; d<4; d++) {
       var nx=cur.x+dirs[d].dx, ny=cur.y+dirs[d].dy;
       var key=nx+','+ny;
-      if (!visited[key] && grid[ny] && grid[ny][nx]===T.EMPTY) {
+      if (!visited[key] && grid[ny] && isWalkable(grid[ny][nx])) {
         visited[key]=true; queue.push({x:nx,y:ny});
       }
     }
@@ -557,159 +561,184 @@ var GUARD_TYPES = ['guard','guard','guard','drone','k9'];
 
 function generateLevel(lvNum, seed) {
   var rng = makeRng(seed);
-  var diff = Math.min(lvNum, 20); // difficulty cap
+  var diff = Math.min(lvNum, 20);
 
-  // Init grid full of walls
+  // ── 1. Build grid full of walls ──
   var grid = [];
   for (var r=0; r<ROWS; r++) {
     grid[r] = [];
-    for (var c=0; c<COLS; c++) grid[r][c] = T.WALL;
+    for (var ci=0; ci<COLS; ci++) grid[r][ci] = T.WALL;
   }
 
-  // BSP split — more depth = more rooms at higher levels
+  // ── 2. BSP split & carve rooms ──
   var depth = 2 + Math.min(Math.floor(diff/3), 3);
   var root = new BSPNode(0, 0, COLS-1, ROWS-2);
   bspSplit(root, rng, depth);
   bspCarveRooms(root, rng, grid);
 
-  // Get all leaf rooms
+  // ── 3. Collect leaf rooms that were actually carved ──
   var leaves = [];
   bspGetLeaves(root, leaves);
-  leaves = leaves.filter(function(l){return l.room;});
+  leaves = leaves.filter(function(l){ return l.room; });
+
+  // Fallback: open map if BSP produced < 2 rooms
   if (leaves.length < 2) {
-    // Fallback — open map
     for (var r2=1; r2<ROWS-2; r2++)
-      for (var c2=1; c2<COLS-1; c2++) grid[r2][c2]=T.EMPTY;
-    leaves = [{room:{x:1,y:1,w:3,h:3,cx:2,cy:2}},
-              {room:{x:COLS-4,y:ROWS-5,w:3,h:3,cx:COLS-3,cy:ROWS-4}}];
+      for (var c2=1; c2<COLS-1; c2++) grid[r2][c2] = T.EMPTY;
+    leaves = [
+      {room:{x:1,  y:1,  w:4,h:4,cx:2,cy:2}},
+      {room:{x:COLS-5,y:ROWS-6,w:4,h:4,cx:COLS-4,cy:ROWS-5}}
+    ];
   }
 
-  // Shuffle rooms
-  leaves.sort(function(){return rng()-0.5;});
+  // Shuffle so start/exit rooms are random
+  leaves.sort(function(){ return rng()-0.5; });
 
-  // Player starts in first room
+  // ── 4. Helper: pick the emptiest cell in a room farthest from (ox,oy) ──
+  function bestCell(room, ox, oy) {
+    var best=null, bd=-1;
+    for (var ri=room.y; ri<room.y+room.h; ri++)
+      for (var ci2=room.x; ci2<room.x+room.w; ci2++)
+        if (grid[ri][ci2]===T.EMPTY) {
+          var d=Math.abs(ci2-ox)+Math.abs(ri-oy);
+          if (d>bd){bd=d;best={x:ci2,y:ri};}
+        }
+    return best;
+  }
+
+  // ── 5. Player start ──
   var startRoom = leaves[0].room;
-  var sx = startRoom.x+1, sy = startRoom.y+1;
+  var sp = bestCell(startRoom, COLS/2, ROWS/2) ||
+           {x:Math.min(startRoom.x+1,COLS-2), y:Math.min(startRoom.y+1,ROWS-2)};
+  var sx=sp.x, sy=sp.y;
+  // Make sure start cell is clear
+  grid[sy][sx] = T.EMPTY;
 
-  // Exit in last room — placed LAST so nothing overwrites it
-  var exitRoom = leaves[leaves.length-1].room;
-  // Find a valid empty cell in exit room, prefer corner far from start
-  var ex = -1, ey = -1;
-  var bestDist = -1;
-  for (var er=exitRoom.y; er<exitRoom.y+exitRoom.h; er++) {
-    for (var ec=exitRoom.x; ec<exitRoom.x+exitRoom.w; ec++) {
-      if (grid[er][ec]===T.EMPTY) {
-        var dd=Math.abs(ec-sx)+Math.abs(er-sy);
-        if (dd>bestDist){bestDist=dd;ex=ec;ey=er;}
-      }
-    }
+  // ── 6. Exit room — as far from start as possible ──
+  // Sort remaining rooms by distance from start, pick farthest
+  var others = leaves.slice(1);
+  others.sort(function(a,b){
+    var da=Math.abs(a.room.cx-sx)+Math.abs(a.room.cy-sy);
+    var db=Math.abs(b.room.cx-sx)+Math.abs(b.room.cy-sy);
+    return db-da;
+  });
+  var exitLeaf = others[0];
+  var ep = bestCell(exitLeaf.room, sx, sy);
+  if (!ep) {
+    // Room has no empty cells yet — force carve one
+    var fx=Math.min(exitLeaf.room.x+1,COLS-2);
+    var fy=Math.min(exitLeaf.room.y+1,ROWS-2);
+    grid[fy][fx]=T.EMPTY;
+    ep={x:fx,y:fy};
   }
-  // Fallback if room has no empty cells
-  if (ex===-1) {
-    ex=Math.min(exitRoom.x+exitRoom.w-1, COLS-2);
-    ey=Math.min(exitRoom.y+exitRoom.h-1, ROWS-2);
-    grid[ey][ex]=T.EMPTY;
+  var ex=ep.x, ey=ep.y;
+
+  // ── 7. Guarantee path from start to exit ──
+  if (!isReachable(grid, sx, sy, ex, ey)) {
+    var px=sx, py=sy;
+    while (px!==ex){ px+=px<ex?1:-1; if(grid[py][px]===T.WALL) grid[py][px]=T.EMPTY; }
+    while (py!==ey){ py+=py<ey?1:-1; if(grid[py][px]===T.WALL) grid[py][px]=T.EMPTY; }
   }
 
-  // Number of data packets scales with level
+  // ── 8. Place items (never on start or exit) ──
+  function safePut(r,ci3,tile){
+    if(r===sy&&ci3===sx) return false;
+    if(r===ey&&ci3===ex) return false;
+    if(grid[r][ci3]===T.EMPTY){grid[r][ci3]=tile;return true;}
+    return false;
+  }
+
+  // DATA packets
   var dataCount = 2 + Math.min(Math.floor(diff/2), 4);
   var dataPlaced = 0;
-  var roomsForData = leaves.slice(1, leaves.length-1);
-  if (!roomsForData.length) roomsForData = leaves.slice(1);
-  roomsForData.forEach(function(leaf) {
-    if (dataPlaced < dataCount && leaf.room) {
-      var pos = placeInRoom(grid, leaf.room, T.DATA, sx, sy, 3, rng);
-      if (pos) dataPlaced++;
-    }
+  var dataRooms = leaves.slice(1);
+  dataRooms.forEach(function(leaf){
+    if(dataPlaced>=dataCount||!leaf.room) return;
+    var cp=bestCell(leaf.room, sx, sy);
+    if(cp && safePut(cp.y,cp.x,T.DATA)) dataPlaced++;
   });
-  // If not enough data placed, add more
-  while (dataPlaced < dataCount) {
-    var leaf2 = leaves[Math.floor(rng()*leaves.length)];
-    if (leaf2.room) {
-      var pos2 = placeInRoom(grid, leaf2.room, T.DATA, sx, sy, 2, rng);
-      if (pos2) dataPlaced++;
-      else break;
-    } else break;
+  // Fill remaining data in any room
+  for(var di=0; di<leaves.length && dataPlaced<dataCount; di++){
+    var dr=leaves[di].room;
+    if(!dr) continue;
+    for(var dri=dr.y; dri<dr.y+dr.h && dataPlaced<dataCount; dri++)
+      for(var dci=dr.x; dci<dr.x+dr.w && dataPlaced<dataCount; dci++)
+        if(safePut(dri,dci,T.DATA)) dataPlaced++;
   }
 
-  // VPN
-  var vpnRoom = leaves[Math.floor(rng()*leaves.length)];
-  if (vpnRoom.room) placeInRoom(grid, vpnRoom.room, T.VPN, sx, sy, 2, rng);
+  // VPN — middle room
+  var vpnLeaf = leaves[Math.floor(leaves.length/2)];
+  if(vpnLeaf&&vpnLeaf.room){
+    var vp=bestCell(vpnLeaf.room,sx,sy);
+    if(vp) safePut(vp.y,vp.x,T.VPN);
+  }
 
-  // Firewall barriers — more at higher levels
-  var fwCount = Math.floor(diff/3);
-  for (var f=0; f<fwCount; f++) {
-    var fr = 1+Math.floor(rng()*(ROWS-3));
-    var fc = 1+Math.floor(rng()*(COLS-2));
-    if (grid[fr][fc]===T.EMPTY && Math.abs(fc-sx)+Math.abs(fr-sy)>4
-        && !(fr===ey&&fc===ex))
-      grid[fr][fc]=T.FIRE;
+  // Ability pickup
+  var abLeaf = leaves[Math.floor(rng()*leaves.length)];
+  if(abLeaf&&abLeaf.room){
+    var ap=bestCell(abLeaf.room,sx,sy);
+    if(ap){
+      var abTile=[T.IFREEZE,T.IDECOY,T.ISPRINT][Math.floor(rng()*3)];
+      safePut(ap.y,ap.x,abTile);
+    }
+  }
+
+  // Firewalls
+  var fwCount=Math.floor(diff/3);
+  for(var f=0;f<fwCount;f++){
+    var fr=1+Math.floor(rng()*(ROWS-3));
+    var fc=1+Math.floor(rng()*(COLS-2));
+    if(grid[fr][fc]===T.EMPTY && Math.abs(fc-sx)+Math.abs(fr-sy)>5)
+      safePut(fr,fc,T.FIRE);
   }
 
   // Mines
-  var mineCount = Math.floor(diff/4);
-  for (var m=0; m<mineCount; m++) {
-    var mr=1+Math.floor(rng()*(ROWS-3)), mc2=1+Math.floor(rng()*(COLS-2));
-    if (grid[mr][mc2]===T.EMPTY && Math.abs(mc2-sx)+Math.abs(mr-sy)>5
-        && !(mr===ey&&mc2===ex))
-      grid[mr][mc2]=T.MINE;
+  var mineCount=Math.floor(diff/4);
+  for(var m=0;m<mineCount;m++){
+    var mr=1+Math.floor(rng()*(ROWS-3));
+    var mc=1+Math.floor(rng()*(COLS-2));
+    if(grid[mr][mc]===T.EMPTY && Math.abs(mc-sx)+Math.abs(mr-sy)>6)
+      safePut(mr,mc,T.MINE);
   }
 
-  // Ability pickups
-  var abRoom = leaves[Math.floor(rng()*leaves.length)];
-  if (abRoom.room) {
-    var abTile = [T.IFREEZE,T.IDECOY,T.ISPRINT][Math.floor(rng()*3)];
-    placeInRoom(grid, abRoom.room, abTile, sx, sy, 2, rng);
-  }
-
-  // Place EXIT last — nothing can overwrite it now
+  // ── 9. Place EXIT last — guaranteed ──
   grid[ey][ex] = T.EXIT;
 
-  // Guards — scale with difficulty
+  // ── 10. Guards ──
   var guardCount = 1 + Math.min(Math.floor(diff*0.6), 8);
   var guards = [];
-  var usedRooms = new Set();
-  usedRooms.add(0); // don't spawn in start room
-  for (var g=0; g<guardCount; g++) {
-    // Pick a room that's not the start
-    var attempts = 0;
-    while (attempts < 20) {
-      var gi = 1 + Math.floor(rng()*(leaves.length-1));
-      var gl = leaves[gi];
-      if (!gl || !gl.room) { attempts++; continue; }
-      var gr = gl.room;
-      // Place guard in center of room
-      var gx = gr.cx, gy = gr.cy;
-      if (grid[gy][gx] !== T.EMPTY) { attempts++; continue; }
-      // Pick type weighted by difficulty
-      var typePool = diff < 3 ? ['guard','guard','guard'] :
-                     diff < 6 ? ['guard','guard','drone','k9'] :
-                                 ['guard','drone','drone','k9'];
-      var gtype = typePool[Math.floor(rng()*typePool.length)];
-      var gmax = 2+Math.floor(rng()*5);
-      var gdx = rng()>0.5?1:-1, gdy=0;
-      if (rng()>0.5){gdy=gdx;gdx=0;}
-      guards.push({x:gx,y:gy,dx:gdx,dy:gdy,s:0,max:gmax,type:gtype,frozen:0});
+  for(var g=0;g<guardCount;g++){
+    for(var att=0;att<30;att++){
+      var gi=1+Math.floor(rng()*(leaves.length-1));
+      if(gi>=leaves.length) continue;
+      var gl=leaves[gi];
+      if(!gl||!gl.room) continue;
+      var gx=gl.room.cx, gy2=gl.room.cy;
+      // Only spawn on truly empty cells
+      if(grid[gy2][gx]!==T.EMPTY) {
+        // try to find empty cell nearby
+        var gc2=bestCell(gl.room,sx,sy);
+        if(!gc2||grid[gc2.y][gc2.x]!==T.EMPTY) continue;
+        gx=gc2.x; gy2=gc2.y;
+      }
+      var typePool = diff<3?['guard','guard','guard']:
+                     diff<6?['guard','guard','drone','k9']:
+                            ['guard','drone','drone','k9'];
+      var gtype=typePool[Math.floor(rng()*typePool.length)];
+      var gmax=2+Math.floor(rng()*5);
+      var gdx=rng()>0.5?1:-1, gdy=0;
+      if(rng()>0.5){gdy=gdx;gdx=0;}
+      guards.push({x:gx,y:gy2,dx:gdx,dy:gdy,s:0,max:gmax,type:gtype,frozen:0});
       break;
     }
   }
 
-  // Timer — decreases with difficulty
-  var timer = Math.max(40, 100 - diff*3);
-
-  // Verify exit reachable from start — if not, open a corridor
-  if (!isReachable(grid, sx, sy, ex, ey)) {
-    // Brute force connect: carve direct path
-    var cx=sx, cy=sy;
-    while (cx!==ex) { cx+=cx<ex?1:-1; if(cy>0&&cy<ROWS-1) grid[cy][cx]=T.EMPTY; }
-    while (cy!==ey) { cy+=cy<ey?1:-1; if(cx>0&&cx<COLS-1) grid[cy][cx]=T.EMPTY; }
-  }
-
+  var timer = Math.max(40, 100-diff*3);
   var nameIdx = (lvNum-1) % LVL_NAMES.length;
   return {
     name: 'LVL '+lvNum+': '+LVL_NAMES[nameIdx],
     t: timer,
-    data: dataPlaced,
+    data: Math.max(1, dataPlaced),
     start: {x:sx, y:sy},
     grid: grid,
     guards: guards,
