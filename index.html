@@ -420,7 +420,292 @@ var AB=[
   {n:'СПРИНТ',cd:10000,dur:4000}
 ];
 
-var LEVELS=[
+// ═══════════════════════════════════════════════
+//  BSP PROCEDURAL LEVEL GENERATOR
+// ═══════════════════════════════════════════════
+
+// Seeded RNG (mulberry32)
+function makeRng(seed) {
+  var s = seed >>> 0;
+  return function() {
+    s += 0x6D2B79F5;
+    var t = Math.imul(s ^ s >>> 15, 1 | s);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+// BSP node
+function BSPNode(x, y, w, h) {
+  this.x=x; this.y=y; this.w=w; this.h=h;
+  this.left=null; this.right=null;
+  this.room=null;
+}
+
+function bspSplit(node, rng, depth) {
+  if (depth <= 0) return;
+  var minSize = 5;
+  var canH = node.w >= minSize*2+1;
+  var canV = node.h >= minSize*2+1;
+  if (!canH && !canV) return;
+
+  var splitH = canH && canV ? rng() > 0.5 : canH;
+
+  if (splitH) {
+    var min = minSize, max = node.w - minSize - 1;
+    if (min >= max) return;
+    var split = Math.floor(rng() * (max - min) + min);
+    node.left  = new BSPNode(node.x, node.y, split, node.h);
+    node.right = new BSPNode(node.x+split+1, node.y, node.w-split-1, node.h);
+  } else {
+    var min2 = minSize, max2 = node.h - minSize - 1;
+    if (min2 >= max2) return;
+    var split2 = Math.floor(rng() * (max2 - min2) + min2);
+    node.left  = new BSPNode(node.x, node.y, node.w, split2);
+    node.right = new BSPNode(node.x, node.y+split2+1, node.w, node.h-split2-1);
+  }
+  bspSplit(node.left,  rng, depth-1);
+  bspSplit(node.right, rng, depth-1);
+}
+
+function bspCarveRooms(node, rng, grid) {
+  if (!node.left && !node.right) {
+    // Leaf — carve a room inside this partition
+    var pad = 1;
+    var rw = Math.floor(rng()*(node.w-pad*2-2)+3+pad);
+    var rh = Math.floor(rng()*(node.h-pad*2-2)+3+pad);
+    rw = Math.min(rw, node.w-pad*2);
+    rh = Math.min(rh, node.h-pad*2);
+    var rx = node.x + pad + Math.floor(rng()*(node.w-pad*2-rw));
+    var ry = node.y + pad + Math.floor(rng()*(node.h-pad*2-rh));
+    rx = Math.max(node.x+1, Math.min(rx, node.x+node.w-rw-1));
+    ry = Math.max(node.y+1, Math.min(ry, node.y+node.h-rh-1));
+    node.room = {x:rx, y:ry, w:rw, h:rh,
+      cx: Math.floor(rx+rw/2), cy: Math.floor(ry+rh/2)};
+    for (var r=ry; r<ry+rh; r++)
+      for (var c=rx; c<rx+rw; c++)
+        if (r>0&&r<ROWS-1&&c>0&&c<COLS-1) grid[r][c]=T.EMPTY;
+    return node.room;
+  }
+  var rA = bspCarveRooms(node.left,  rng, grid);
+  var rB = bspCarveRooms(node.right, rng, grid);
+  // Connect the two rooms with an L-corridor
+  if (rA && rB) {
+    var x1=rA.cx, y1=rA.cy, x2=rB.cx, y2=rB.cy;
+    // horizontal then vertical
+    var xMin=Math.min(x1,x2), xMax=Math.max(x1,x2);
+    var yMin=Math.min(y1,y2), yMax=Math.max(y1,y2);
+    for (var c2=xMin; c2<=xMax; c2++)
+      if (y1>0&&y1<ROWS-1&&c2>0&&c2<COLS-1) grid[y1][c2]=T.EMPTY;
+    for (var r2=yMin; r2<=yMax; r2++)
+      if (r2>0&&r2<ROWS-1&&x2>0&&x2<COLS-1) grid[r2][x2]=T.EMPTY;
+  }
+  return rA || rB;
+}
+
+function bspGetLeaves(node, leaves) {
+  if (!node) return;
+  if (!node.left && !node.right) { leaves.push(node); return; }
+  bspGetLeaves(node.left,  leaves);
+  bspGetLeaves(node.right, leaves);
+}
+
+// BFS reachability check
+function isReachable(grid, sx, sy, tx, ty) {
+  var visited = {};
+  var queue = [{x:sx,y:sy}];
+  visited[sx+','+sy] = true;
+  var dirs = [{dx:1,dy:0},{dx:-1,dy:0},{dx:0,dy:1},{dx:0,dy:-1}];
+  while (queue.length) {
+    var cur = queue.shift();
+    if (cur.x===tx && cur.y===ty) return true;
+    for (var d=0; d<4; d++) {
+      var nx=cur.x+dirs[d].dx, ny=cur.y+dirs[d].dy;
+      var key=nx+','+ny;
+      if (!visited[key] && grid[ny] && grid[ny][nx]===T.EMPTY) {
+        visited[key]=true; queue.push({x:nx,y:ny});
+      }
+    }
+  }
+  return false;
+}
+
+// Place item in random empty cell of a room (not too close to start)
+function placeInRoom(grid, room, tile, sx, sy, minDist, rng) {
+  minDist = minDist || 0;
+  rng = rng || Math.random.bind(Math);
+  var cells = [];
+  for (var ri=room.y; ri<room.y+room.h; ri++)
+    for (var ci=room.x; ci<room.x+room.w; ci++)
+      if (grid[ri][ci]===T.EMPTY) {
+        var d=Math.abs(ci-sx)+Math.abs(ri-sy);
+        if (d>=minDist) cells.push({x:ci,y:ri});
+      }
+  if (!cells.length) return null;
+  var pick = cells[Math.floor(rng()*cells.length)];
+  grid[pick.y][pick.x] = tile;
+  return pick;
+}
+
+// LEVEL NAMES by theme
+var LVL_NAMES = [
+  'СТАРТАП','ОФИС','ФАЙРВОЛ','ДАТАЦЕНТР','АНБ СЕРВЕР',
+  'ПЕНТАГОН','ЦРУ АРХИВ','KREMLIN.RU','DEEP STATE','МАТРИЦА'
+];
+
+var GUARD_TYPES = ['guard','guard','guard','drone','k9'];
+
+function generateLevel(lvNum, seed) {
+  var rng = makeRng(seed);
+  var diff = Math.min(lvNum, 20); // difficulty cap
+
+  // Init grid full of walls
+  var grid = [];
+  for (var r=0; r<ROWS; r++) {
+    grid[r] = [];
+    for (var c=0; c<COLS; c++) grid[r][c] = T.WALL;
+  }
+
+  // BSP split — more depth = more rooms at higher levels
+  var depth = 2 + Math.min(Math.floor(diff/3), 3);
+  var root = new BSPNode(0, 0, COLS-1, ROWS-2);
+  bspSplit(root, rng, depth);
+  bspCarveRooms(root, rng, grid);
+
+  // Get all leaf rooms
+  var leaves = [];
+  bspGetLeaves(root, leaves);
+  leaves = leaves.filter(function(l){return l.room;});
+  if (leaves.length < 2) {
+    // Fallback — open map
+    for (var r2=1; r2<ROWS-2; r2++)
+      for (var c2=1; c2<COLS-1; c2++) grid[r2][c2]=T.EMPTY;
+    leaves = [{room:{x:1,y:1,w:3,h:3,cx:2,cy:2}},
+              {room:{x:COLS-4,y:ROWS-5,w:3,h:3,cx:COLS-3,cy:ROWS-4}}];
+  }
+
+  // Shuffle rooms
+  leaves.sort(function(){return rng()-0.5;});
+
+  // Player starts in first room
+  var startRoom = leaves[0].room;
+  var sx = startRoom.x+1, sy = startRoom.y+1;
+
+  // Exit in last room — far from start
+  var exitRoom = leaves[leaves.length-1].room;
+  var ex = exitRoom.x+exitRoom.w-2, ey = exitRoom.y+exitRoom.h-2;
+  grid[ey][ex] = T.EXIT;
+
+  // Number of data packets scales with level
+  var dataCount = 2 + Math.min(Math.floor(diff/2), 4);
+  var dataPlaced = 0;
+  var roomsForData = leaves.slice(1, leaves.length-1);
+  if (!roomsForData.length) roomsForData = leaves.slice(1);
+  roomsForData.forEach(function(leaf) {
+    if (dataPlaced < dataCount && leaf.room) {
+      var pos = placeInRoom(grid, leaf.room, T.DATA, sx, sy, 3, rng);
+      if (pos) dataPlaced++;
+    }
+  });
+  // If not enough data placed, add more
+  while (dataPlaced < dataCount) {
+    var leaf2 = leaves[Math.floor(rng()*leaves.length)];
+    if (leaf2.room) {
+      var pos2 = placeInRoom(grid, leaf2.room, T.DATA, sx, sy, 2, rng);
+      if (pos2) dataPlaced++;
+      else break;
+    } else break;
+  }
+
+  // VPN
+  var vpnRoom = leaves[Math.floor(rng()*leaves.length)];
+  if (vpnRoom.room) placeInRoom(grid, vpnRoom.room, T.VPN, sx, sy, 2, rng);
+
+  // Firewall barriers — more at higher levels
+  var fwCount = Math.floor(diff/3);
+  for (var f=0; f<fwCount; f++) {
+    var fr = 1+Math.floor(rng()*(ROWS-3));
+    var fc = 1+Math.floor(rng()*(COLS-2));
+    if (grid[fr][fc]===T.EMPTY && Math.abs(fc-sx)+Math.abs(fr-sy)>4)
+      grid[fr][fc]=T.FIRE;
+  }
+
+  // Mines
+  var mineCount = Math.floor(diff/4);
+  for (var m=0; m<mineCount; m++) {
+    var mr=1+Math.floor(rng()*(ROWS-3)), mc2=1+Math.floor(rng()*(COLS-2));
+    if (grid[mr][mc2]===T.EMPTY && Math.abs(mc2-sx)+Math.abs(mr-sy)>5)
+      grid[mr][mc2]=T.MINE;
+  }
+
+  // Ability pickups
+  var abRoom = leaves[Math.floor(rng()*leaves.length)];
+  if (abRoom.room) {
+    var abTile = [T.IFREEZE,T.IDECOY,T.ISPRINT][Math.floor(rng()*3)];
+    placeInRoom(grid, abRoom.room, abTile, sx, sy, 2);
+  }
+
+  // Guards — scale with difficulty
+  var guardCount = 1 + Math.min(Math.floor(diff*0.6), 8);
+  var guards = [];
+  var usedRooms = new Set();
+  usedRooms.add(0); // don't spawn in start room
+  for (var g=0; g<guardCount; g++) {
+    // Pick a room that's not the start
+    var attempts = 0;
+    while (attempts < 20) {
+      var gi = 1 + Math.floor(rng()*(leaves.length-1));
+      var gl = leaves[gi];
+      if (!gl || !gl.room) { attempts++; continue; }
+      var gr = gl.room;
+      // Place guard in center of room
+      var gx = gr.cx, gy = gr.cy;
+      if (grid[gy][gx] !== T.EMPTY) { attempts++; continue; }
+      // Pick type weighted by difficulty
+      var typePool = diff < 3 ? ['guard','guard','guard'] :
+                     diff < 6 ? ['guard','guard','drone','k9'] :
+                                 ['guard','drone','drone','k9'];
+      var gtype = typePool[Math.floor(rng()*typePool.length)];
+      var gmax = 2+Math.floor(rng()*5);
+      var gdx = rng()>0.5?1:-1, gdy=0;
+      if (rng()>0.5){gdy=gdx;gdx=0;}
+      guards.push({x:gx,y:gy,dx:gdx,dy:gdy,s:0,max:gmax,type:gtype,frozen:0});
+      break;
+    }
+  }
+
+  // Timer — decreases with difficulty
+  var timer = Math.max(40, 100 - diff*3);
+
+  // Verify exit reachable from start — if not, open a corridor
+  if (!isReachable(grid, sx, sy, ex, ey)) {
+    // Brute force connect: carve direct path
+    var cx=sx, cy=sy;
+    while (cx!==ex) { cx+=cx<ex?1:-1; if(cy>0&&cy<ROWS-1) grid[cy][cx]=T.EMPTY; }
+    while (cy!==ey) { cy+=cy<ey?1:-1; if(cx>0&&cx<COLS-1) grid[cy][cx]=T.EMPTY; }
+  }
+
+  var nameIdx = (lvNum-1) % LVL_NAMES.length;
+  return {
+    name: 'LVL '+lvNum+': '+LVL_NAMES[nameIdx],
+    t: timer,
+    data: dataPlaced,
+    start: {x:sx, y:sy},
+    grid: grid,
+    guards: guards,
+    seed: seed
+  };
+}
+
+// Generate next level on demand — seed based on level number + daily offset
+function getSeededLevel(lvNum) {
+  var dailySeed = Math.floor(Date.now() / 86400000); // changes daily
+  var seed = (dailySeed * 1000 + lvNum * 137 + 42) >>> 0;
+  return generateLevel(lvNum, seed);
+}
+
+// ── Keep static levels 1-5 as intro, then go infinite ──
+var STATIC_LEVELS=[
 {name:'LVL 1: Стартап',t:95,data:3,start:{x:1,y:1},
 grid:[
 [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
@@ -633,10 +918,24 @@ function cloneLv(l){
     guards:l.guards.map(function(g){return Object.assign({},g);})};
 }
 
+// Get level — static for 1-5, procedural from 6 onwards
+function getLevelData(i) {
+  if (i < STATIC_LEVELS.length) {
+    var sl = cloneLv(STATIC_LEVELS[i]);
+    sl.seed = 0;
+    return sl;
+  }
+  // Seed changes daily — everyone gets same procedural map each day
+  var dailySeed = Math.floor(Date.now() / 86400000);
+  var seed = ((dailySeed * 1000 + (i+1) * 137 + 42) >>> 0);
+  return generateLevel(i+1, seed);
+}
+
 function initLv(i){
-  var l=cloneLv(LEVELS[i]);
+  var l = getLevelData(i);
   G={grid:l.grid,player:{x:l.start.x,y:l.start.y},guards:l.guards,hasVpn:false,
-     data:0,dataTotal:l.data,level:i,timerMs:l.t*1000,timerStart:Date.now(),hasKey:false,msg:'',mc:'#00ff88'};
+     data:0,dataTotal:Math.max(1,l.data),level:i,timerMs:l.t*1000,timerStart:Date.now(),
+     hasKey:false,msg:'',mc:'#00ff88',levelName:l.name,seed:l.seed||0};
   vpnEnd=0;sprintEnd=0;decoyPos=null;decoyEnd=0;abCD=[0,0,0];mineTmr={};parts=[];
   updAbUI();
 }
@@ -649,7 +948,8 @@ function startGame(){
 }
 
 function nextLevel(){
-  lvIdx++;initLv(lvIdx);hideOv();
+  lvIdx++;
+  initLv(lvIdx);hideOv();
   playing=true;bgOn=true;bgMusic();resizeCanvas();loop();
 }
 
@@ -658,7 +958,8 @@ function showMenu(){
     '<div style="font-size:9px;color:#00ff88;letter-spacing:4px;margin-bottom:8px">PIXEL STEALTH v2.0</div>'+
     '<div style="font-size:20px;color:#00ff44;text-shadow:0 0 20px #00ff44;margin-bottom:3px">ОБХОД</div>'+
     '<div style="font-size:20px;color:#ffaa00;text-shadow:0 0 20px #ffaa00;margin-bottom:12px">САНКЦИЙ</div>'+
-    '<div style="font-size:7px;color:#888;margin-bottom:14px">🏆 РЕКОРД: '+hs+'</div>'+
+    '<div style="font-size:7px;color:#888;margin-bottom:6px">🏆 РЕКОРД: '+hs+'</div>'+
+    '<div style="font-size:6px;color:#446644;margin-bottom:12px">∞ БЕСКОНЕЧНЫЕ УРОВНИ · SEED КАРТЫ</div>'+
     '<div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:center">'+
     '<button class="btn" style="font-size:11px;padding:12px 26px" onclick="startGame()">▶ НАЧАТЬ</button>'+
     '<button class="btn btn-b" style="font-size:9px;padding:10px 16px" onclick="showLeaderboard()">🏆 РЕКОРДЫ</button>'+
@@ -714,41 +1015,36 @@ function die(reason){
 function winLv(){
   hap('success');snd.win();
   var tl=Math.max(0,G.timerMs-(Date.now()-G.timerStart));
-  var bonus=500+Math.floor(tl/100);score+=bonus;
-  if(lvIdx+1<LEVELS.length){
-    showOv(
-      '<div style="font-size:17px;color:#00ff44;text-shadow:0 0 20px #00ff44;margin-bottom:8px">УРОВЕНЬ ПРОЙДЕН!</div>'+
-      '<div style="font-size:8px;color:#88ffaa;margin-bottom:6px">+'+bonus+' бонус за время</div>'+
-      '<div style="font-size:9px;color:#ffdd00;margin-bottom:16px">ИТОГО: '+score+' | ❤️×'+lives+'</div>'+
-      '<button class="btn" style="font-size:11px;padding:12px 32px" onclick="nextLevel()">▶ ДАЛЬШЕ</button>'
-    );
-  } else {
-    saveHs(score);
-    saveToLeaderboard(score);
-    if(tg && tg.MainButton){
-      tg.MainButton.setText('🏆 ПОДЕЛИТЬСЯ РЕЗУЛЬТАТОМ');
-      tg.MainButton.show();
-      tg.MainButton.offClick();
-      tg.MainButton.onClick(function(){
-        hap('light');
-        var text = '🏆 Обход Санкций\n\nПрошёл все 5 уровней!\nСчёт: ' + score + ' очков 🕵️\nСмогёшь повторить?';
-        if(tg.openTelegramLink) {
-          tg.openTelegramLink('https://t.me/share/url?url=' + encodeURIComponent(text));
-        } else {
-          try { navigator.clipboard.writeText(text); setMsg('Скопировано!','#00ff88'); } catch(e){}
-        }
-      });
-    }
-    showOv(
-      '<div style="font-size:15px;color:#ffdd00;text-shadow:0 0 30px #ffdd00;margin-bottom:8px">🏆 МИССИЯ ВЫПОЛНЕНА!</div>'+
-      '<div style="font-size:8px;color:#aaddff;margin-bottom:6px">ВСЕ 5 УРОВНЕЙ ПРОЙДЕНЫ</div>'+
-      '<div style="font-size:11px;color:#00ff44;margin-bottom:6px">ИТОГ: '+score+'</div>'+
-      '<div style="font-size:7px;color:#888;margin-bottom:16px">РЕКОРД: '+hs+'</div>'+
-      '<button class="btn btn-g" onclick="startGame()">▶ СНОВА</button>'+
-      '<button class="btn btn-b" onclick="showLeaderboard()">🏆 РЕКОРДЫ</button>'
-    );
-    if(tg && tg.BackButton) tg.BackButton.hide();
-  }
+  // Score multiplier: every 5 levels adds 0.5x
+  var mult = 1 + Math.floor(lvIdx/5)*0.5;
+  var bonus = Math.floor((500+Math.floor(tl/100)) * mult);
+  score += bonus;
+  saveHs(score);
+
+  var isEndOfStatic = lvIdx+1 === STATIC_LEVELS.length;
+  var isInfinite = lvIdx >= STATIC_LEVELS.length;
+  var nextLvNum = lvIdx+2;
+  var nextName = lvIdx+1 < STATIC_LEVELS.length
+    ? STATIC_LEVELS[lvIdx+1].name
+    : '🔀 LVL '+nextLvNum+': '+LVL_NAMES[(lvIdx+1) % LVL_NAMES.length];
+
+  var multStr = mult>1 ? ' <span style="color:#ffdd00">×'+mult+'</span>' : '';
+  var milestone = isEndOfStatic
+    ? '<div style="font-size:7px;color:#ffaa00;margin:4px 0 8px">🔀 БЕСКОНЕЧНЫЙ РЕЖИМ!</div>'
+    : '';
+  var seedStr = isInfinite
+    ? '<div style="font-size:6px;color:#334433;margin-bottom:6px">seed: '+G.seed+'</div>'
+    : '';
+
+  showOv(
+    '<div style="font-size:17px;color:#00ff44;text-shadow:0 0 20px #00ff44;margin-bottom:8px">✅ ПРОЙДЕН!</div>'+
+    '<div style="font-size:8px;color:#88ffaa;margin-bottom:4px">+'+bonus+' бонус'+multStr+'</div>'+
+    '<div style="font-size:9px;color:#ffdd00;margin-bottom:6px">ИТОГО: '+score+' | ❤️×'+lives+'</div>'+
+    seedStr+
+    milestone+
+    '<div style="font-size:7px;color:#448866;margin-bottom:12px">▶ '+nextName+'</div>'+
+    '<button class="btn" style="font-size:11px;padding:12px 32px" onclick="nextLevel()">▶ ДАЛЬШЕ</button>'
+  );
 }
 
 function setMsg(m,c){
@@ -958,11 +1254,11 @@ function draw(){
   var ts=Math.ceil(tl2/1000);
   ctx.font="8px 'Press Start 2P',monospace";
   ctx.textAlign='left';
-  ctx.fillStyle='#00ff44';ctx.fillText(LEVELS[G.level].name,8,14);
+  ctx.fillStyle='#00ff44';ctx.fillText(G.levelName||('LVL '+(G.level+1)),8,14);
   ctx.fillStyle='#00aaff';ctx.fillText('DATA: '+G.data+'/'+G.dataTotal,8,30);
   ctx.fillStyle='#ff4455';ctx.fillText('❤️×'+lives,8,46);
   ctx.textAlign='right';
-  ctx.fillStyle='#ffdd00';ctx.fillText('SCORE: '+score,792,14);
+  var dispMult=1+Math.floor(lvIdx/5)*0.5; ctx.fillStyle='#ffdd00';ctx.fillText('SCORE: '+score+(dispMult>1?' x'+dispMult:''),792,14);
   ctx.fillStyle=ts<=10?'#ff2200':ts<=20?'#ffaa00':'#00ff44';ctx.fillText('⏱ '+ts+'s',792,30);
   ctx.fillStyle=G.hasVpn?'#00ff44':'#ff4400';
   var vs=G.hasVpn?Math.ceil((vpnEnd-now)/1000):0;
