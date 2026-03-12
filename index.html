@@ -20,7 +20,7 @@
   messagingSenderId: "528335066731",
   appId: "1:528335066731:web:189991c63232f40d83432e"
   };
-  // ════════════════════════════════════════════
+
 
   try {
     firebase.initializeApp(firebaseConfig);
@@ -689,18 +689,43 @@ function generateLevel(lvNum, seed) {
     }
   }
 
-  // Firewalls — only in rooms, far from start
-  var fwCount=Math.floor(diff/3);
+  // Firewalls — place in corridor cells (narrow passages), verify VPN stays reachable
+  // First collect VPN position so we can BFS-check after each firewall placed
+  var vpnPos=null;
+  for(var vsr=0;vsr<ROWS&&!vpnPos;vsr++)
+    for(var vsc=0;vsc<COLS&&!vpnPos;vsc++)
+      if(grid[vsr][vsc]===T.VPN) vpnPos={x:vsc,y:vsr};
+
+  // Corridor cells = EMPTY cells with exactly 2 opposite neighbours open (narrow choke)
+  var corridorCells=[];
+  for(var cr=1;cr<ROWS-1;cr++){
+    for(var cc=1;cc<COLS-1;cc++){
+      if(grid[cr][cc]!==T.EMPTY) continue;
+      if(Math.abs(cc-sx)+Math.abs(cr-sy)<7) continue; // not near start
+      var openN=grid[cr-1][cc]!==T.WALL, openS=grid[cr+1][cc]!==T.WALL;
+      var openW=grid[cr][cc-1]!==T.WALL, openE=grid[cr][cc+1]!==T.WALL;
+      var openCount=(openN?1:0)+(openS?1:0)+(openW?1:0)+(openE?1:0);
+      // Corridor: 2 open sides (passage), not inside a room (rooms have 3-4 open sides)
+      if(openCount===2) corridorCells.push({x:cc,y:cr});
+    }
+  }
+  // Shuffle corridor cells
+  corridorCells.sort(function(){return rng()-0.5;});
+
+  var fwCount=Math.max(0,Math.floor(diff/3));
   var fwPlaced=0;
-  var fwRooms=leaves.slice();fwRooms.sort(function(){return rng()-0.5;});
-  for(var f=0;f<fwRooms.length&&fwPlaced<fwCount;f++){
-    var fl=fwRooms[f];if(!fl||!fl.room) continue;
-    // Skip start room
-    if(fl.room.x===startRoom.x&&fl.room.y===startRoom.y) continue;
-    for(var fri=fl.room.y;fri<fl.room.y+fl.room.h&&fwPlaced<fwCount;fri++)
-      for(var fci=fl.room.x;fci<fl.room.x+fl.room.w&&fwPlaced<fwCount;fci++)
-        if(grid[fri][fci]===T.EMPTY && Math.abs(fci-sx)+Math.abs(fri-sy)>6)
-          if(safePut(fri,fci,T.FIRE)) fwPlaced++;
+  for(var f=0;f<corridorCells.length&&fwPlaced<fwCount;f++){
+    var fc2=corridorCells[f];
+    // Tentatively place firewall
+    grid[fc2.y][fc2.x]=T.FIRE;
+    // Check: player can still reach exit area AND vpn is still reachable (if it exists)
+    var ok=isReachable(grid,sx,sy,ex,ey);
+    if(ok && vpnPos) ok=isReachable(grid,sx,sy,vpnPos.x,vpnPos.y);
+    if(ok){
+      fwPlaced++;
+    } else {
+      grid[fc2.y][fc2.x]=T.EMPTY; // revert — would block critical path
+    }
   }
 
   // Mines
@@ -922,7 +947,10 @@ function die(reason){
   if(lives>0){
     initLv(lvIdx);
     G.msg='ПОЙМАЛИ! Жизней: '+lives;G.mc='#ff4400';
-    hideOv();playing=true;bgOn=true;bgMusic();loop();
+    hideOv();playing=true;
+    bgOn=false;if(bgTmr){clearTimeout(bgTmr);bgTmr=null;}
+    bgOn=true;bgMusic();
+    loop();
   } else {
     saveHs(score);
     saveToLeaderboard(score);
