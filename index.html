@@ -975,7 +975,7 @@ function die(reason){
       tg.MainButton.onClick(function(){
         hap('light');
         var botLink = 'https://t.me/no_restriction_bot';
-        var text = '🕵️ Обход Санкций\n\nЯ набрал ' + score + ' очков!\nСмогёшь лучше? 👇\n' + botLink;
+        var text = '🕵️ Обход Санкций\n\nЯ набрал ' + score + ' очков!\nСмогёшь лучше? 👇\n @no_restriction_bot' + botLink;
         // Try native Telegram share
         if(tg.openTelegramLink) {
           tg.openTelegramLink('https://t.me/share/url?url=' + encodeURIComponent(botLink) + '&text=' + encodeURIComponent('🕵️ Обход Санкций — я набрал ' + score + ' очков! Смогёшь лучше?'));
