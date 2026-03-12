@@ -591,10 +591,25 @@ function generateLevel(lvNum, seed) {
   var startRoom = leaves[0].room;
   var sx = startRoom.x+1, sy = startRoom.y+1;
 
-  // Exit in last room — far from start
+  // Exit in last room — placed LAST so nothing overwrites it
   var exitRoom = leaves[leaves.length-1].room;
-  var ex = exitRoom.x+exitRoom.w-2, ey = exitRoom.y+exitRoom.h-2;
-  grid[ey][ex] = T.EXIT;
+  // Find a valid empty cell in exit room, prefer corner far from start
+  var ex = -1, ey = -1;
+  var bestDist = -1;
+  for (var er=exitRoom.y; er<exitRoom.y+exitRoom.h; er++) {
+    for (var ec=exitRoom.x; ec<exitRoom.x+exitRoom.w; ec++) {
+      if (grid[er][ec]===T.EMPTY) {
+        var dd=Math.abs(ec-sx)+Math.abs(er-sy);
+        if (dd>bestDist){bestDist=dd;ex=ec;ey=er;}
+      }
+    }
+  }
+  // Fallback if room has no empty cells
+  if (ex===-1) {
+    ex=Math.min(exitRoom.x+exitRoom.w-1, COLS-2);
+    ey=Math.min(exitRoom.y+exitRoom.h-1, ROWS-2);
+    grid[ey][ex]=T.EMPTY;
+  }
 
   // Number of data packets scales with level
   var dataCount = 2 + Math.min(Math.floor(diff/2), 4);
@@ -626,7 +641,8 @@ function generateLevel(lvNum, seed) {
   for (var f=0; f<fwCount; f++) {
     var fr = 1+Math.floor(rng()*(ROWS-3));
     var fc = 1+Math.floor(rng()*(COLS-2));
-    if (grid[fr][fc]===T.EMPTY && Math.abs(fc-sx)+Math.abs(fr-sy)>4)
+    if (grid[fr][fc]===T.EMPTY && Math.abs(fc-sx)+Math.abs(fr-sy)>4
+        && !(fr===ey&&fc===ex))
       grid[fr][fc]=T.FIRE;
   }
 
@@ -634,7 +650,8 @@ function generateLevel(lvNum, seed) {
   var mineCount = Math.floor(diff/4);
   for (var m=0; m<mineCount; m++) {
     var mr=1+Math.floor(rng()*(ROWS-3)), mc2=1+Math.floor(rng()*(COLS-2));
-    if (grid[mr][mc2]===T.EMPTY && Math.abs(mc2-sx)+Math.abs(mr-sy)>5)
+    if (grid[mr][mc2]===T.EMPTY && Math.abs(mc2-sx)+Math.abs(mr-sy)>5
+        && !(mr===ey&&mc2===ex))
       grid[mr][mc2]=T.MINE;
   }
 
@@ -642,8 +659,11 @@ function generateLevel(lvNum, seed) {
   var abRoom = leaves[Math.floor(rng()*leaves.length)];
   if (abRoom.room) {
     var abTile = [T.IFREEZE,T.IDECOY,T.ISPRINT][Math.floor(rng()*3)];
-    placeInRoom(grid, abRoom.room, abTile, sx, sy, 2);
+    placeInRoom(grid, abRoom.room, abTile, sx, sy, 2, rng);
   }
+
+  // Place EXIT last — nothing can overwrite it now
+  grid[ey][ex] = T.EXIT;
 
   // Guards — scale with difficulty
   var guardCount = 1 + Math.min(Math.floor(diff*0.6), 8);
@@ -704,130 +724,12 @@ function getSeededLevel(lvNum) {
   return generateLevel(lvNum, seed);
 }
 
-// ── Keep static levels 1-5 as intro, then go infinite ──
-var STATIC_LEVELS=[
-{name:'LVL 1: Стартап',t:95,data:3,start:{x:1,y:1},
-grid:[
-[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
-[1,0,0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0,0,1],
-[1,0,2,0,0,0,1,0,0,3,0,0,0,0,1,0,0,0,0,1],
-[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
-[1,0,0,1,1,0,1,0,0,0,0,0,1,1,0,0,0,0,0,1],
-[1,0,0,1,0,0,1,0,0,0,0,0,1,0,0,0,6,0,0,1],
-[1,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,1],
-[1,0,0,0,0,0,0,0,0,3,0,0,0,0,0,0,0,0,0,1],
-[1,0,0,1,0,0,1,0,0,0,0,0,1,0,0,0,6,0,0,1],
-[1,0,0,1,1,0,1,0,0,0,0,0,1,1,0,0,0,0,0,1],
-[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
-[1,0,8,0,0,0,1,0,0,0,0,0,0,0,1,0,0,3,0,1],
-[1,0,0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0,0,1],
-[1,0,0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0,5,1],
-[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
-[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
-],guards:[
-  {x:8,y:5,dx:1,dy:0,s:0,max:4,type:'guard',frozen:0},
-  {x:12,y:9,dx:0,dy:1,s:0,max:3,type:'guard',frozen:0}
-]},
-{name:'LVL 2: Файрвол',t:75,data:3,start:{x:1,y:1},
-grid:[
-[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
-[1,0,0,0,0,1,0,0,0,0,0,0,0,0,1,0,0,0,0,1],
-[1,0,2,0,0,1,0,0,3,0,0,0,0,0,1,0,3,0,0,1],
-[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
-[1,6,6,1,0,0,0,0,0,0,0,0,0,0,0,0,1,6,6,1],
-[1,0,0,1,0,0,0,1,1,1,1,1,0,0,0,0,1,0,0,1],
-[1,0,0,0,0,0,0,1,0,0,0,1,0,0,0,0,0,0,0,1],
-[1,0,0,0,0,0,0,1,0,3,0,1,0,0,0,0,0,0,0,1],
-[1,0,9,0,0,0,0,1,0,0,0,1,0,0,0,0,0,0,0,1],
-[1,0,0,1,0,0,0,1,1,1,1,1,0,0,0,0,1,0,0,1],
-[1,6,6,1,0,0,0,0,0,0,0,0,0,0,0,0,1,6,6,1],
-[1,0,0,0,7,0,0,0,0,0,0,0,7,0,0,0,0,0,0,1],
-[1,0,0,0,0,1,0,0,0,0,0,0,0,0,1,0,2,0,0,1],
-[1,0,0,0,0,1,0,0,0,0,0,0,0,0,1,0,0,0,5,1],
-[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
-[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
-],guards:[
-  {x:5,y:7,dx:1,dy:0,s:0,max:5,type:'guard',frozen:0},
-  {x:14,y:3,dx:0,dy:1,s:0,max:4,type:'guard',frozen:0},
-  {x:9,y:10,dx:-1,dy:0,s:0,max:3,type:'drone',frozen:0}
-]},
-{name:'LVL 3: Датацентр',t:70,data:3,start:{x:1,y:1},
-grid:[
-[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
-[1,0,0,0,1,0,3,0,0,0,0,11,0,0,0,1,0,0,0,1],
-[1,0,2,0,1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,1],
-[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
-[1,0,1,1,1,1,1,0,0,0,0,0,1,1,1,1,1,0,0,1],
-[1,0,1,0,0,0,0,0,0,7,0,0,0,0,0,0,1,0,0,1],
-[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
-[1,12,12,0,0,3,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
-[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
-[1,0,1,0,0,0,0,0,0,7,0,0,0,0,0,0,1,0,0,1],
-[1,0,1,1,1,1,1,0,0,0,0,0,1,1,1,1,1,0,0,1],
-[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
-[1,0,0,0,1,0,0,3,0,0,0,0,0,0,0,1,0,10,0,1],
-[1,0,0,0,1,0,0,0,0,0,0,0,0,0,0,1,0,0,5,1],
-[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
-[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
-],guards:[
-  {x:9,y:3,dx:1,dy:0,s:0,max:4,type:'guard',frozen:0},
-  {x:5,y:8,dx:0,dy:1,s:0,max:3,type:'k9',frozen:0},
-  {x:13,y:6,dx:1,dy:1,s:0,max:3,type:'drone',frozen:0},
-  {x:3,y:11,dx:1,dy:0,s:0,max:5,type:'guard',frozen:0}
-]},
-{name:'LVL 4: АНБ Сервер',t:60,data:3,start:{x:1,y:1},
-grid:[
-[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
-[1,0,0,0,0,1,0,0,0,0,2,0,0,0,0,1,0,0,0,1],
-[1,0,0,0,0,1,0,0,0,0,0,0,0,0,0,1,0,3,0,1],
-[1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
-[1,6,6,6,0,0,0,6,6,6,6,6,6,0,0,0,0,6,6,1],
-[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
-[1,0,0,1,1,1,0,0,0,3,0,0,0,1,1,1,0,0,0,1],
-[1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,1],
-[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
-[1,7,0,0,0,0,0,0,0,3,0,0,0,0,0,0,0,7,0,1],
-[1,0,0,1,1,1,0,0,0,0,0,0,0,1,1,1,0,0,0,1],
-[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
-[1,6,6,6,0,0,0,6,6,6,6,6,6,0,0,0,0,6,6,1],
-[1,0,0,0,0,8,0,0,0,0,0,0,0,0,9,0,0,0,0,1],
-[1,1,1,1,1,1,1,1,1,1,1,1,5,1,1,1,1,1,1,1],
-[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
-],guards:[
-  {x:3,y:6,dx:0,dy:1,s:0,max:4,type:'guard',frozen:0},
-  {x:16,y:6,dx:0,dy:1,s:0,max:4,type:'guard',frozen:0},
-  {x:9,y:5,dx:1,dy:0,s:0,max:4,type:'drone',frozen:0},
-  {x:5,y:11,dx:1,dy:0,s:0,max:5,type:'k9',frozen:0},
-  {x:14,y:3,dx:0,dy:1,s:0,max:4,type:'k9',frozen:0}
-]},
-{name:'LVL 5: ПЕНТАГОН',t:55,data:4,start:{x:1,y:1},
-grid:[
-[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
-[1,0,0,1,0,0,0,1,0,0,2,0,0,1,0,0,0,1,0,1],
-[1,0,0,1,0,3,0,1,0,0,0,0,0,1,0,3,0,1,0,1],
-[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
-[1,1,1,6,1,1,1,6,1,1,0,1,1,6,1,1,1,6,1,1],
-[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
-[1,0,7,0,0,1,0,0,0,0,0,0,0,0,1,0,7,0,0,1],
-[1,0,0,0,0,1,0,0,0,3,0,0,0,0,1,0,0,0,0,1],
-[1,12,12,0,0,0,0,0,0,0,0,0,0,0,0,0,12,12,1],
-[1,0,0,0,0,1,0,0,0,0,0,3,0,0,1,0,0,0,0,1],
-[1,0,7,0,0,1,0,0,0,0,0,0,0,0,1,0,7,0,0,1],
-[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
-[1,1,1,6,1,1,1,6,1,1,0,1,1,6,1,1,1,6,1,1],
-[1,0,0,0,0,11,0,0,0,0,0,0,0,9,0,0,0,0,0,1],
-[1,1,1,1,1,1,1,1,1,1,5,1,1,1,1,1,1,1,1,1],
-[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
-],guards:[
-  {x:9,y:2,dx:1,dy:0,s:0,max:4,type:'guard',frozen:0},
-  {x:5,y:7,dx:0,dy:1,s:0,max:4,type:'guard',frozen:0},
-  {x:14,y:7,dx:0,dy:1,s:0,max:4,type:'guard',frozen:0},
-  {x:9,y:12,dx:-1,dy:0,s:0,max:4,type:'guard',frozen:0},
-  {x:3,y:9,dx:1,dy:1,s:0,max:3,type:'drone',frozen:0},
-  {x:16,y:9,dx:-1,dy:1,s:0,max:3,type:'drone',frozen:0},
-  {x:9,y:6,dx:0,dy:1,s:0,max:3,type:'k9',frozen:0}
-]}
-];
+// ── Fixed-seed levels 1-5 (same for everyone, always) ──
+// Seeds chosen manually to produce nice maps
+var FIXED_SEEDS = [0xA1B2C3, 0xDEAD42, 0x1337FF, 0xC0FFEE, 0xF00BAA];
+var STATIC_LEVELS = FIXED_SEEDS.map(function(seed, i) {
+  return generateLevel(i+1, seed);
+});
 
 // ═══════════════════════════════════════════════
 //  GAME STATE
@@ -920,12 +822,11 @@ function cloneLv(l){
 
 // Get level — static for 1-5, procedural from 6 onwards
 function getLevelData(i) {
-  if (i < STATIC_LEVELS.length) {
-    var sl = cloneLv(STATIC_LEVELS[i]);
-    sl.seed = 0;
-    return sl;
+  if (i < FIXED_SEEDS.length) {
+    // Fixed seed levels — identical for everyone always
+    return generateLevel(i+1, FIXED_SEEDS[i]);
   }
-  // Seed changes daily — everyone gets same procedural map each day
+  // Procedural: seed changes daily — same map for all players on same day
   var dailySeed = Math.floor(Date.now() / 86400000);
   var seed = ((dailySeed * 1000 + (i+1) * 137 + 42) >>> 0);
   return generateLevel(i+1, seed);
@@ -1021,12 +922,10 @@ function winLv(){
   score += bonus;
   saveHs(score);
 
-  var isEndOfStatic = lvIdx+1 === STATIC_LEVELS.length;
-  var isInfinite = lvIdx >= STATIC_LEVELS.length;
+  var isEndOfStatic = lvIdx+1 === FIXED_SEEDS.length;
+  var isInfinite = lvIdx >= FIXED_SEEDS.length;
   var nextLvNum = lvIdx+2;
-  var nextName = lvIdx+1 < STATIC_LEVELS.length
-    ? STATIC_LEVELS[lvIdx+1].name
-    : '🔀 LVL '+nextLvNum+': '+LVL_NAMES[(lvIdx+1) % LVL_NAMES.length];
+  var nextName = '🔀 LVL '+nextLvNum+': '+LVL_NAMES[(lvIdx+1) % LVL_NAMES.length];
 
   var multStr = mult>1 ? ' <span style="color:#ffdd00">×'+mult+'</span>' : '';
   var milestone = isEndOfStatic
