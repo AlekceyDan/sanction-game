@@ -10,7 +10,9 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
 <script>
-
+  // ════════════════════════════════════════════
+  //  🔥 ВСТАВЬ СЮДА СВОЙ FIREBASE CONFIG
+  // ════════════════════════════════════════════
   var firebaseConfig = {
   apiKey: "AIzaSyAT_JSJXQLJ87FAEPa0VE1knW17LrLnLfQ",
   authDomain: "sanction-game.firebaseapp.com",
@@ -20,7 +22,7 @@
   messagingSenderId: "528335066731",
   appId: "1:528335066731:web:189991c63232f40d83432e"
   };
-
+  // ════════════════════════════════════════════
 
   try {
     firebase.initializeApp(firebaseConfig);
@@ -908,9 +910,12 @@ function initLv(i){
   updAbUI();
 }
 
+function stopBg(){bgOn=false;if(bgTmr){clearTimeout(bgTmr);bgTmr=null;}}
+function startBg(){stopBg();bgOn=true;bgMusic();}
+
 function startGame(){
   rac();score=0;lvIdx=0;lives=3;initLv(0);hideOv();
-  playing=true;bgOn=true;bgMusic();resizeCanvas();loop();
+  playing=true;startBg();resizeCanvas();loop();
   if(tg && tg.BackButton) tg.BackButton.show();
   if(tg && tg.MainButton) tg.MainButton.hide();
 }
@@ -918,7 +923,7 @@ function startGame(){
 function nextLevel(){
   lvIdx++;
   initLv(lvIdx);hideOv();
-  playing=true;bgOn=true;bgMusic();resizeCanvas();loop();
+  playing=true;startBg();resizeCanvas();loop();
 }
 
 function showMenu(){
@@ -947,10 +952,7 @@ function die(reason){
   if(lives>0){
     initLv(lvIdx);
     G.msg='ПОЙМАЛИ! Жизней: '+lives;G.mc='#ff4400';
-    hideOv();playing=true;
-    bgOn=false;if(bgTmr){clearTimeout(bgTmr);bgTmr=null;}
-    bgOn=true;bgMusic();
-    loop();
+    hideOv();playing=true;startBg();loop();
   } else {
     saveHs(score);
     saveToLeaderboard(score);
@@ -961,10 +963,11 @@ function die(reason){
       tg.MainButton.offClick(); // remove old listeners
       tg.MainButton.onClick(function(){
         hap('light');
-        var text = '🕵️ Обход Санкций\n\nЯ набрал ' + score + ' очков!\nСмогёшь лучше? 👇';
+        var botLink = 'https://t.me/no_restriction_bot';
+        var text = '🕵️ Обход Санкций\n\nЯ набрал ' + score + ' очков!\nСмогёшь лучше? 👇\n' + botLink;
         // Try native Telegram share
         if(tg.openTelegramLink) {
-          tg.openTelegramLink('https://t.me/share/url?url=' + encodeURIComponent(text));
+          tg.openTelegramLink('https://t.me/share/url?url=' + encodeURIComponent(botLink) + '&text=' + encodeURIComponent('🕵️ Обход Санкций — я набрал ' + score + ' очков! Смогёшь лучше?'));
         } else {
           // Fallback: copy to clipboard
           try { navigator.clipboard.writeText(text); setMsg('Скопировано!','#00ff88'); } catch(e){}
