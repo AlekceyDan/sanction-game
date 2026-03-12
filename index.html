@@ -402,11 +402,22 @@ var snd={
   die:function(){[400,300,200,100].forEach(function(f,i){setTimeout(function(){beep(f,.1,'sawtooth',.17);},i*80);});},
   step:function(){if(Math.random()<.25)beep(60+Math.random()*15,.03,'sine',.025);}
 };
-var bgOn=false, bgTmr=null;
+var bgOn=false, bgTmr=null, bgRunning=false;
+var _bgN=[130,146,165,196,220,196,165,146], _bgI=0;
+function _bgTick(){
+  bgTmr=null;
+  if(!bgOn){bgRunning=false;return;}
+  var n=_bgN[_bgI%_bgN.length];
+  beep(n,.16,'square',.035);
+  if(_bgI%4===0)beep(n/2,.22,'sine',.018);
+  _bgI++;
+  bgTmr=setTimeout(_bgTick,210+Math.random()*70);
+}
 function bgMusic(){
-  var N=[130,146,165,196,220,196,165,146],i=0;
-  var p=function(){if(!bgOn)return;var n=N[i%N.length];beep(n,.16,'square',.035);
-    if(i%4===0)beep(n/2,.22,'sine',.018);i++;bgTmr=setTimeout(p,210+Math.random()*70);};p();
+  if(bgRunning&&bgOn)return;
+  bgRunning=true;
+  if(bgTmr){clearTimeout(bgTmr);bgTmr=null;}
+  _bgTick();
 }
 
 // ═══════════════════════════════════════════════
@@ -1150,6 +1161,7 @@ function tick(){
     });
   }
   G.guards.forEach(function(g){
+    if(g.frozen>Date.now()) return; // frozen guard can't catch anyone
     var range=g.type==='k9'?(G.hasVpn?1:2):1;
     if(Math.abs(g.x-G.player.x)+Math.abs(g.y-G.player.y)<=range&&!G.hasVpn){
       snd.alert();
