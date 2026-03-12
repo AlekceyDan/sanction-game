@@ -587,15 +587,25 @@ function resizeCanvas(){
   canvas.style.height=ch+'px';
   wrap.style.height=ch+'px';
 
-  // Scale dpad and ability buttons proportionally
-  var padW=Math.max(120, Math.floor(window.innerWidth*0.38));
-  var padH=Math.max(88, Math.floor(padW*0.65));
-  var mpad=document.getElementById('mpad');
-  if(mpad){mpad.style.width=padW+'px';mpad.style.height=padH+'px';}
-  var btnW=Math.max(60, Math.floor(window.innerWidth*0.16));
-  var btnH=Math.max(28, Math.floor(padH/3-4));
+  // Scale dpad and ability buttons — bigger on mobile
+  var isMobile = window.innerWidth < 700;
+  var padW = Math.max(170, Math.floor(window.innerWidth * (isMobile ? 0.52 : 0.40)));
+  var padH = Math.max(130, Math.floor(padW * 0.75));
+  var mpad = document.getElementById('mpad');
+  if(mpad){ mpad.style.width=padW+'px'; mpad.style.height=padH+'px'; }
+  var btnW = Math.max(80, Math.floor(window.innerWidth * (isMobile ? 0.23 : 0.17)));
+  var btnH = Math.max(40, Math.floor(padH/3 - 4));
   document.querySelectorAll('.abtn').forEach(function(b){
-    b.style.width=btnW+'px';b.style.height=btnH+'px';
+    b.style.width=btnW+'px'; b.style.height=btnH+'px';
+  });
+  document.querySelectorAll('#mpad button').forEach(function(b){
+    b.style.fontSize = isMobile ? '30px' : '22px';
+  });
+  document.querySelectorAll('.abtn .icon').forEach(function(b){
+    b.style.fontSize = isMobile ? '22px' : '18px';
+  });
+  document.querySelectorAll('.abtn .lbl').forEach(function(b){
+    b.style.fontSize = isMobile ? '6px' : '5px';
   });
 }
 window.addEventListener('resize',resizeCanvas);
